@@ -160,8 +160,7 @@ func printReplaceString(tcs []Testcase, search, replace string) {
 		}
 
 		var modSteps []Step
-		var stepIndexes []int
-		for i, step := range tc.Steps {
+		for _, step := range tc.Steps {
 			var tmp Step
 			tmp.Action = strings.Replace(step.Action, search, replace, -1)
 			tmp.Expected = strings.Replace(step.Expected, search, replace, -1)
@@ -169,19 +168,12 @@ func printReplaceString(tcs []Testcase, search, replace string) {
 			if tmp.Action != step.Action || tmp.Expected != step.Expected {
 				tmp.ID = step.ID
 				tmp.Step = step.Step
-				if tmp.Action == "" {
-					tmp.Action = step.Action
-				}
-				if tmp.Expected == "" {
-					tmp.Expected = step.Expected
-				}
 				modSteps = append(modSteps, tmp)
-				stepIndexes = append(stepIndexes, i)
 			}
 		}
 
 		if modSummary != "" || modPreconditions != "" || len(modSteps) != 0 {
-			color.Green("=== Test Case ID : %v ===\n", tc.ID)
+			color.Green("=== Test Case ID : %v (Internal : %v) ===\n", tc.EXTID, tc.ID)
 			if modSummary != "" {
 				fmt.Println(" Summary: ")
 				fmt.Print("   old: ")
@@ -196,18 +188,29 @@ func printReplaceString(tcs []Testcase, search, replace string) {
 				fmt.Print("   new: ")
 				colorablePrint(modPreconditions, replace, color.FgHiBlue)
 			}
-			for _, i := range stepIndexes {
-				fmt.Println(" Step No.:", tc.Steps[i].Step)
-				fmt.Println("  Actions: ")
-				fmt.Print("   old: ")
-				colorablePrint(tc.Steps[i].Action, search, color.FgRed)
-				fmt.Print("   new: ")
-				colorablePrint(modSteps[i].Action, replace, color.FgHiBlue)
-				fmt.Println("  Expected: ")
-				fmt.Print("   old: ")
-				colorablePrint(tc.Steps[i].Expected, search, color.FgRed)
-				fmt.Print("   new: ")
-				colorablePrint(modSteps[i].Expected, replace, color.FgHiBlue)
+			for _, step := range modSteps {
+				var origStep Step
+				for i := 0; i < len(tc.Steps); i++ {
+					if tc.Steps[i].Step == step.Step {
+						origStep = tc.Steps[i]
+						break
+					}
+				}
+				fmt.Println(" Step No.:", origStep.Step)
+				if step.Action != origStep.Action {
+					fmt.Println("  Actions: ")
+					fmt.Print("   old: ")
+					colorablePrint(origStep.Action, search, color.FgRed)
+					fmt.Print("   new: ")
+					colorablePrint(step.Action, replace, color.FgHiBlue)
+				}
+				if step.Expected != origStep.Expected {
+					fmt.Println("  Expected: ")
+					fmt.Print("   old: ")
+					colorablePrint(origStep.Expected, search, color.FgRed)
+					fmt.Print("   new: ")
+					colorablePrint(step.Expected, replace, color.FgHiBlue)
+				}
 			}
 			fmt.Println()
 		}
@@ -233,7 +236,7 @@ func printSearchString(tcs []Testcase, search string) {
 		}
 
 		if foundInSummary || foundInPreconditions || len(foundSteps) != 0 {
-			color.Green("=== Test Case ID : %v ===\n", tc.ID)
+			color.Green("=== Test Case ID : %v (External ID: %v) ===\n", tc.ID, tc.EXTID)
 			if foundInSummary {
 				fmt.Print(" Summary: ")
 				colorablePrint(tc.Summary, search, color.FgRed)
@@ -258,6 +261,8 @@ var dbname = flag.String("db", "testlink", "")
 var pname = flag.String("project", "", "")
 var search = flag.String("search", "", "")
 var replace = flag.String("replace", "", "")
+var user = flag.String("u", "root", "user name for db")
+var pass = flag.String("P", "", "password for db")
 
 func main() {
 	flag.Parse()
@@ -276,7 +281,7 @@ func main() {
 	fmt.Println(" * Are these settings OK? ( YES : Press Enter / NO : Press CTRL+C )")
 	bufio.NewScanner(os.Stdin).Scan()
 
-	db, err := sql.Open("mysql", "root:@/"+*dbname)
+	db, err := sql.Open("mysql", *user+":"+*pass+"@/"+*dbname)
 	if err != nil {
 		panic(err)
 	}
