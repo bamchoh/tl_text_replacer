@@ -45,6 +45,13 @@ type Step struct {
 	Expected string
 }
 
+type ReplaceCandidate struct {
+	ID   uint64
+	Type string
+	Keys []string
+	Text map[string]string
+}
+
 type TestLinkDB struct {
 	*sql.DB
 }
@@ -132,18 +139,104 @@ func (tldb *TestLinkDB) getTestcasesByNodeinfo(nodes []Node) ([]Testcase, error)
 	return tcs, nil
 }
 
-func colorablePrint(text, search string, fgcolor color.Attribute) {
+func (tldb *TestLinkDB) replaceByCandidates(rcs []ReplaceCandidate) error {
+	for _, rc := range rcs {
+		switch rc.Type {
+		case "testcase":
+			var setStmt []string
+			var setVals []interface{}
+			for _, k := range rc.Keys {
+				setStmt = append(setStmt, fmt.Sprintf("%v = ?", k))
+				setVals = append(setVals, rc.Text[k])
+			}
+			setVals = append(setVals, rc.ID)
+			_, err := tldb.Query("update tcversions set "+strings.Join(setStmt, ",")+" where id = ?", setVals...)
+			if err != nil {
+				return err
+			}
+		case "step":
+			var setStmt []string
+			var setVals []interface{}
+			for _, k := range rc.Keys {
+				setStmt = append(setStmt, fmt.Sprintf("%v = ?", k))
+				setVals = append(setVals, rc.Text[k])
+			}
+			setVals = append(setVals, rc.ID)
+			_, err := tldb.Query("update tcsteps set "+strings.Join(setStmt, ",")+" where id = ?", setVals...)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func colorablePrint(text, search string, fgcolor, bgcolor color.Attribute) {
 	cnt := strings.Count(text, search)
 	x := 0
 	for i := 0; i < cnt; i++ {
 		n := strings.Index(text[x:], search)
 		fmt.Print(text[x : x+n])
-		color.New(fgcolor).Print(text[x+n : x+n+len(search)])
+		color.New(fgcolor).Add(bgcolor).Print(text[x+n : x+n+len(search)])
 		x += n + len(search)
 	}
 	fmt.Print(text[x:])
 	if !strings.HasSuffix(text, "\n") {
 		fmt.Println()
+	}
+}
+
+func generateReplaceCandidates(tcs []Testcase, search, replace string) []ReplaceCandidate {
+	var rcs []ReplaceCandidate
+	for _, tc := range tcs {
+		rc := ReplaceCandidate{}
+		rc.Text = make(map[string]string)
+		if text := strings.Replace(tc.Summary, search, replace, -1); text != tc.Summary {
+			rc.ID = tc.ID
+			rc.Type = "testcase"
+			rc.Keys = append(rc.Keys, "summary")
+			rc.Text["summary"] = text
+		}
+		if text := strings.Replace(tc.Preconditions, search, replace, -1); text != tc.Preconditions {
+			rc.ID = tc.ID
+			rc.Type = "testcase"
+			rc.Keys = append(rc.Keys, "preconditions")
+			rc.Text["precondition"] = text
+		}
+		if rc.ID != 0 {
+			rcs = append(rcs, rc)
+		}
+		for _, step := range tc.Steps {
+			rc := ReplaceCandidate{}
+			rc.Text = make(map[string]string)
+			if text := strings.Replace(step.Action, search, replace, -1); text != step.Action {
+				rc.ID = step.ID
+				rc.Type = "step"
+				rc.Keys = append(rc.Keys, "actions")
+				rc.Text["action"] = text
+			}
+			if text := strings.Replace(step.Expected, search, replace, -1); text != step.Expected {
+				rc.ID = step.ID
+				rc.Type = "step"
+				rc.Keys = append(rc.Keys, "expected_results")
+				rc.Text["expected"] = text
+			}
+			if rc.ID != 0 {
+				rcs = append(rcs, rc)
+			}
+		}
+	}
+	return rcs
+}
+
+func printReplaceCandidates(rcs []ReplaceCandidate) {
+	for _, rc := range rcs {
+		color.Green("=== ID : %v ===\n", rc.ID)
+		fmt.Println("Type:", rc.Type)
+		for _, k := range rc.Keys {
+			fmt.Print(strings.Title(k), ":")
+			colorablePrint(rc.Text[k], *replace, color.FgBlack, color.BgYellow)
+		}
 	}
 }
 
@@ -177,16 +270,16 @@ func printReplaceString(tcs []Testcase, search, replace string) {
 			if modSummary != "" {
 				fmt.Println(" Summary: ")
 				fmt.Print("   old: ")
-				colorablePrint(tc.Summary, search, color.FgRed)
+				colorablePrint(tc.Summary, search, color.FgRed, color.BgBlack)
 				fmt.Print("   new: ")
-				colorablePrint(modSummary, replace, color.FgHiBlue)
+				colorablePrint(modSummary, replace, color.FgHiBlue, color.BgBlack)
 			}
 			if modPreconditions != "" {
 				fmt.Println(" Precond: ")
 				fmt.Print("   old: ")
-				colorablePrint(tc.Preconditions, search, color.FgRed)
+				colorablePrint(tc.Preconditions, search, color.FgRed, color.BgBlack)
 				fmt.Print("   new: ")
-				colorablePrint(modPreconditions, replace, color.FgHiBlue)
+				colorablePrint(modPreconditions, replace, color.FgHiBlue, color.BgBlack)
 			}
 			for _, step := range modSteps {
 				var origStep Step
@@ -200,16 +293,16 @@ func printReplaceString(tcs []Testcase, search, replace string) {
 				if step.Action != origStep.Action {
 					fmt.Println("  Actions: ")
 					fmt.Print("   old: ")
-					colorablePrint(origStep.Action, search, color.FgRed)
+					colorablePrint(origStep.Action, search, color.FgRed, color.BgBlack)
 					fmt.Print("   new: ")
-					colorablePrint(step.Action, replace, color.FgHiBlue)
+					colorablePrint(step.Action, replace, color.FgHiBlue, color.BgBlack)
 				}
 				if step.Expected != origStep.Expected {
 					fmt.Println("  Expected: ")
 					fmt.Print("   old: ")
-					colorablePrint(origStep.Expected, search, color.FgRed)
+					colorablePrint(origStep.Expected, search, color.FgRed, color.BgBlack)
 					fmt.Print("   new: ")
-					colorablePrint(step.Expected, replace, color.FgHiBlue)
+					colorablePrint(step.Expected, replace, color.FgHiBlue, color.BgBlack)
 				}
 			}
 			fmt.Println()
@@ -239,18 +332,18 @@ func printSearchString(tcs []Testcase, search string) {
 			color.Green("=== Test Case ID : %v (External ID: %v) ===\n", tc.ID, tc.EXTID)
 			if foundInSummary {
 				fmt.Print(" Summary: ")
-				colorablePrint(tc.Summary, search, color.FgRed)
+				colorablePrint(tc.Summary, search, color.FgRed, color.BgBlack)
 			}
 			if foundInPreconditions {
 				fmt.Printf(" Precond: ")
-				colorablePrint(tc.Preconditions, search, color.FgRed)
+				colorablePrint(tc.Preconditions, search, color.FgRed, color.BgBlack)
 			}
 			for _, i := range foundSteps {
 				fmt.Println(" Step No.:", tc.Steps[i].Step)
 				fmt.Printf("  Actions: ")
-				colorablePrint(tc.Steps[i].Action, search, color.FgRed)
+				colorablePrint(tc.Steps[i].Action, search, color.FgRed, color.BgBlack)
 				fmt.Printf("  Expected: ")
-				colorablePrint(tc.Steps[i].Expected, search, color.FgRed)
+				colorablePrint(tc.Steps[i].Expected, search, color.FgRed, color.BgBlack)
 			}
 			fmt.Println()
 		}
@@ -304,5 +397,12 @@ func main() {
 		panic(err)
 	}
 
-	printReplaceString(tcs, *search, *replace)
+	rcs := generateReplaceCandidates(tcs, *search, *replace)
+
+	printReplaceCandidates(rcs)
+
+	err = tldb.replaceByCandidates(rcs)
+	if err != nil {
+		panic(err)
+	}
 }
